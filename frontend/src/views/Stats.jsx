@@ -5,7 +5,7 @@ import { EXIDX } from '../lib/exercises.js'
 import { lastBW, streakWeeks, setLabel, modeOf, effortOf } from '../lib/history.js'
 import { fmtNum, fmtDate, fmtVol, todayISO, weekKey } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
-import { bwSheet, goalSheet, calendarSheet, workoutDetailSheet, WorkoutRow, bwDeltaColor } from '../sheets.jsx'
+import { bwSheet, goalSheet, calendarSheet, workoutDetailSheet, WorkoutRow, bwDeltaColor, bodycompSheet, bodycompGoalSheet, lastComp } from '../sheets.jsx'
 import LineChart from '../components/LineChart.jsx'
 import Heatmap from '../components/Heatmap.jsx'
 import Icon from '../components/Icon.jsx'
@@ -17,6 +17,43 @@ import {
   effortHistogram, isHardSet, HARD_RIR
 } from '../lib/effort.js'
 import { Button, Segmented, SelectRow } from '../components/ui.jsx'
+
+// Body composition over time — the curves a bioimpedance exam feeds. Fat % and muscle
+// mass get their own goals; the rest of the report shows as the latest exam's detail.
+function CompositionCard({ S }) {
+  const [metric, setMetric] = useState('pbf')
+  const comps = S.bodycomp || []
+  const comp = lastComp(S)
+  const METRICS = [
+    { value: 'pbf', label: t('Fat %'), k: 'pbf', unit: '%', goal: S.targetPbf },
+    { value: 'smm', label: t('Muscle'), k: 'smm', unit: 'kg', goal: S.targetSmm },
+    { value: 'fatMass', label: t('Fat mass'), k: 'fatMass', unit: 'kg', goal: null }
+  ].filter(m => comps.some(e => e[m.k] != null))
+  const cur = METRICS.find(m => m.value === metric) || METRICS[0]
+  const pts = cur ? comps.filter(e => e[cur.k] != null).map(e => ({ t: new Date(e.d).getTime(), y: e[cur.k], d: e.d })) : []
+  const DETAIL = [
+    { k: 'tbw', l: 'Total body water', u: 'L' }, { k: 'ecwTbw', l: 'ECW/TBW ratio', u: '' },
+    { k: 'protein', l: 'Protein', u: 'kg' }, { k: 'minerals', l: 'Minerals', u: 'kg' },
+    { k: 'visceral', l: 'Visceral fat level', u: '' }, { k: 'score', l: 'InBody score', u: '' }
+  ].filter(f => comp && comp[f.k] != null)
+  return <div className="card">
+    <div className="row between" style={{ marginBottom: 8 }}>
+      <h2 style={{ margin: 0 }}>{t('Body composition')}</h2>
+      <div className="row" style={{ gap: 8 }}>
+        <Button size="sm" icon="target" style={S.targetPbf || S.targetSmm ? { color: 'var(--yellow)' } : undefined} onClick={bodycompGoalSheet}>{t('Goal')}</Button>
+        <Button size="sm" icon="plus" onClick={bodycompSheet}>{t('Log')}</Button>
+      </div>
+    </div>
+    {METRICS.length > 1 && <Segmented className="seg-range" value={cur.value} onChange={setMetric} options={METRICS.map(({ value, label }) => ({ value, label }))} />}
+    <div className="chart"><LineChart points={pts} h={160} unit={cur ? cur.unit : ''} color="var(--teal)" goal={cur ? cur.goal : null} /></div>
+    {DETAIL.length > 0 && <>
+      <div className="small dim" style={{ margin: '8px 0 4px' }}>{t('Latest exam')} · {fmtDate(comp.d, true)}</div>
+      {DETAIL.map(f => <div key={f.k} className="row between small" style={{ padding: '6px 0', borderBottom: 'var(--hair) solid var(--sep)' }}>
+        <span className="muted">{t(f.l)}</span><span><b>{fmtNum(comp[f.k])}</b>{f.u ? ' ' + f.u : ''}</span>
+      </div>)}
+    </>}
+  </div>
+}
 
 // Which muscles the training in a window actually hit — and, the point of the card,
 // which ones it keeps missing. Shading is relative within the window (lib/muscles.js).
@@ -255,6 +292,8 @@ export default function Stats() {
         </> : <div className="muted small">{t('Finish your first workout to see progress curves here.')}</div>}
       </div>
     </div>
+
+    {(S.bodycomp || []).length > 0 && <CompositionCard S={S} />}
 
     {S.workouts.length > 0 && <>
       <div className="row between" style={{ marginBottom: 10 }}>

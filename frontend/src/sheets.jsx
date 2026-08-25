@@ -11,7 +11,7 @@ import { starterRoutines } from './lib/starter.js'
 import Media, { Thumb } from './components/Media.jsx'
 import Stepper from './components/Stepper.jsx'
 import Icon from './components/Icon.jsx'
-import { Button, Slider, Switch, Segmented, SelectRow, Row } from './components/ui.jsx'
+import { Button, Slider, Switch, Segmented, SelectRow, Row, NumberField } from './components/ui.jsx'
 import { glyphOf, GLYPH_GROUPS, DEFAULT_GLYPH } from './lib/glyphs.js'
 import BodyMap from './components/BodyMap.jsx'
 import { loadOfWorkouts } from './lib/muscles.js'
@@ -129,6 +129,134 @@ export function bwSheet(opts = {}) {
   const h = ui().openSheet(close => <BwSheet {...opts} close={close} />, { locked: !!opts.required })
   return h
 }
+
+/* ============================ body composition (bioimpedance) ============================ */
+// One entry per exam date. Only body fat % and skeletal muscle mass drive the charts and
+// goals; everything else is optional detail straight off the report (e.g. InBody), kept so
+// the app can replace the paper printout. All masses are stored in kg — reports print kg
+// even in lb-profile gyms, and converting a medical report's numbers silently would make
+// them disagree with the sheet in your hand.
+const COMP_MAIN = [
+  { k: 'weight', l: 'Weight', u: 'kg' },
+  { k: 'pbf', l: 'Body fat', u: '%' },
+  { k: 'smm', l: 'Skeletal muscle mass', u: 'kg' }
+]
+const COMP_EXTRA = [
+  { k: 'fatMass', l: 'Fat mass', u: 'kg' },
+  { k: 'ffm', l: 'Lean body mass', u: 'kg' },
+  { k: 'tbw', l: 'Total body water', u: 'L' },
+  { k: 'ecwTbw', l: 'ECW/TBW ratio', u: '' },
+  { k: 'protein', l: 'Protein', u: 'kg' },
+  { k: 'minerals', l: 'Minerals', u: 'kg' },
+  { k: 'visceral', l: 'Visceral fat level', u: '' },
+  { k: 'score', l: 'InBody score', u: '' }
+]
+export const lastComp = st => (st.bodycomp && st.bodycomp.length ? st.bodycomp[st.bodycomp.length - 1] : null)
+
+// Green when the change moves toward the goal, red when away — mirrors bwDeltaColor, and
+// stays neutral without a goal: whether fat down/muscle up is "good" is the goal's call.
+export function compDeltaColor(delta, current, target) {
+  if (!delta) return 'var(--label-2)'
+  if (target == null) return 'var(--label)'
+  return (delta > 0) === (target > current) ? 'var(--acc)' : 'var(--red)'
+}
+
+function BodycompSheet({ close }) {
+  const st = useStore(s => s.S)
+  const last = lastComp(st)
+  const [d, setD] = useState(todayISO())
+  const [vals, setVals] = useState(() => {
+    const ex = (st.bodycomp || []).find(e => e.d === todayISO())
+    return ex ? { ...ex } : { weight: lastBW(st) ? lastBW(st).w : null }
+  })
+  const [more, setMore] = useState(() => COMP_EXTRA.some(f => vals[f.k] != null))
+  const setF = (k, v) => setVals(x => ({ ...x, [k]: v }))
+  // Picking a date that already has an exam turns the sheet into editing that exam.
+  const onDate = iso => {
+    if (!iso) return
+    setD(iso)
+    const ex = (st.bodycomp || []).find(e => e.d === iso)
+    if (ex) { setVals({ ...ex }); if (COMP_EXTRA.some(f => ex[f.k] != null)) setMore(true) }
+  }
+  const save = () => {
+    if (!(vals.pbf > 0) && !(vals.smm > 0)) { toast(t('Enter at least body fat % or muscle mass')); return }
+    if (vals.pbf != null && (vals.pbf <= 0 || vals.pbf >= 70)) { toast(t('Body fat % looks wrong')); return }
+    update(s => {
+      const entry = { d }
+      ;[...COMP_MAIN, ...COMP_EXTRA].forEach(f => { if (vals[f.k] != null && vals[f.k] !== '') entry[f.k] = vals[f.k] })
+      s.bodycomp = (s.bodycomp || []).filter(e => e.d !== d)
+      s.bodycomp.push(entry)
+      s.bodycomp.sort((a, b) => (a.d < b.d ? -1 : 1))
+      // The exam weighed you too — that reading belongs on the weight curve. kg-profile
+      // only: the report is in kg and the weight log follows the profile unit.
+      if (entry.weight > 0 && s.unit === 'kg') {
+        const ex = s.bodyweight.find(b => b.d === d)
+        if (ex) ex.w = entry.weight
+        else { s.bodyweight.push({ d, w: entry.weight, t: Date.now() }); s.bodyweight.sort((a, b) => (a.d < b.d ? -1 : 1)) }
+      }
+    })
+    close(); toast(t('Exam saved'))
+  }
+  const recent = [...(st.bodycomp || [])].reverse().slice(0, 3)
+  const delEntry = iso => update(s => { s.bodycomp = s.bodycomp.filter(e => e.d !== iso) })
+  const field = f => <div key={f.k} className="row between" style={{ padding: '7px 0', gap: 10 }}>
+    <span className="small" style={{ flex: 1 }}>{t(f.l)}{f.u ? <span className="dim"> ({f.u})</span> : ''}</span>
+    <NumberField value={vals[f.k]} nullable onChange={v => setF(f.k, v)} style={{ width: 90, textAlign: 'right' }} />
+  </div>
+  return <>
+    <h3>{t('Log bioimpedance exam')}</h3>
+    <div className="muted small" style={{ marginBottom: 10 }}>{t('From your bioimpedance report (e.g. InBody). Only the fields you fill are saved.')}</div>
+    <div className="row between" style={{ padding: '7px 0', gap: 10 }}>
+      <span className="small" style={{ flex: 1 }}>{t('Exam date')}</span>
+      <input type="date" className="field" style={{ width: 160 }} value={d} max={todayISO()} onChange={e => onDate(e.target.value)} />
+    </div>
+    {COMP_MAIN.map(field)}
+    {more && COMP_EXTRA.map(field)}
+    <Button variant="ghost" size="sm" className="dim" onClick={() => setMore(m => !m)}>{more ? t('Fewer fields') : t('More fields')}</Button>
+    <div style={{ height: 12 }} />
+    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+    {!last && <div className="dim small" style={{ marginTop: 10 }}>{t('Tip: pick the exam’s real date so the curve starts where your history did.')}</div>}
+    {recent.length > 0 && <>
+      <h4 className="sec">{t('Recent exams')}</h4>
+      <div className="list" style={{ gap: 0 }}>
+        {recent.map(e => <div key={e.d} className="row between" style={{ padding: '9px 2px', borderBottom: '1px solid var(--sep)' }}>
+          <span className="small muted tappable" style={{ cursor: 'pointer' }} onClick={() => onDate(e.d)}>{fmtDate(e.d, true)}</span>
+          <span className="row" style={{ gap: 12 }}>
+            <b>{e.pbf != null ? fmtNum(e.pbf) + ' %' : ''}{e.pbf != null && e.smm != null ? ' · ' : ''}{e.smm != null ? fmtNum(e.smm) + ' kg' : ''}</b>
+            <button className="iconbtn" style={{ width: 32, height: 30, borderRadius: 8, fontSize: 15, color: 'var(--red)' }} onClick={() => delEntry(e.d)} aria-label="delete"><Icon name="trash" /></button>
+          </span>
+        </div>)}
+      </div>
+    </>}
+  </>
+}
+export const bodycompSheet = () => ui().openSheet(close => <BodycompSheet close={close} />)
+
+function BodycompGoalSheet({ close }) {
+  const st = S()
+  const [pbf, setPbf] = useState(st.targetPbf)
+  const [smm, setSmm] = useState(st.targetSmm)
+  return <>
+    <h3>{t('Composition goals')}</h3>
+    <div className="muted small" style={{ marginBottom: 10 }}>{t('Goals are drawn through the composition charts, and changes are colored by whether they move toward them.')}</div>
+    <div className="row between" style={{ padding: '7px 0', gap: 10 }}>
+      <span className="small" style={{ flex: 1 }}>{t('Target body fat (%)')}</span>
+      <NumberField value={pbf} nullable onChange={setPbf} style={{ width: 90, textAlign: 'right' }} />
+    </div>
+    <div className="row between" style={{ padding: '7px 0', gap: 10 }}>
+      <span className="small" style={{ flex: 1 }}>{t('Target muscle mass (kg)')}</span>
+      <NumberField value={smm} nullable onChange={setSmm} style={{ width: 90, textAlign: 'right' }} />
+    </div>
+    <div style={{ height: 12 }} />
+    <Button variant="primary" onClick={() => {
+      if (pbf != null && (pbf <= 0 || pbf >= 70)) { toast(t('Body fat % looks wrong')); return }
+      update(s => { s.targetPbf = pbf || null; s.targetSmm = smm || null }); close(); toast(t('Goals saved'))
+    }}>{t('Save goals')}</Button>
+    {(st.targetPbf || st.targetSmm) && <><div style={{ height: 8 }} />
+      <Button variant="danger" onClick={() => { update(s => { s.targetPbf = null; s.targetSmm = null }); close(); toast(t('Goals removed')) }}>{t('Remove goals')}</Button></>}
+  </>
+}
+export const bodycompGoalSheet = () => ui().openSheet(close => <BodycompGoalSheet close={close} />)
 
 /* ============================ import from another app ============================ */
 // Shows what a parsed export would actually do before anything is written. An import is

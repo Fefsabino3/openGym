@@ -4,7 +4,7 @@ import { useStore } from '../store/useStore.js'
 import { effectiveRoutine, effectiveRoutineId, streakWeeks, lastBW, setsDoneActive } from '../lib/history.js'
 import { fmtNum, fmtDate, todayISO, isoOf, weekKey, DAYS } from '../lib/format.js'
 import { t, dateLocale } from '../lib/i18n.js'
-import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, loadStarterPlan, bwDeltaColor } from '../sheets.jsx'
+import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, loadStarterPlan, bwDeltaColor, bodycompSheet, bodycompGoalSheet, compDeltaColor, lastComp } from '../sheets.jsx'
 import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
@@ -41,6 +41,14 @@ export default function Home() {
   const wThisWeek = S.workouts.filter(w => weekKey(w.d) === weekKey(todayISO())).length
   const plannedPerWeek = Object.keys(S.week).filter(k => S.week[k]).length
   const bwPoints = S.bodyweight.slice(-30).map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
+
+  // Body composition — the goal that bioimpedance exams track, where a scale can't.
+  const comps = S.bodycomp || []
+  const comp = lastComp(S)
+  const prevComp = comps.length > 1 ? comps[comps.length - 2] : null
+  const pbfDelta = comp && prevComp && comp.pbf != null && prevComp.pbf != null ? comp.pbf - prevComp.pbf : null
+  const smmDelta = comp && prevComp && comp.smm != null && prevComp.smm != null ? comp.smm - prevComp.smm : null
+  const pbfPoints = comps.filter(e => e.pbf != null).map(e => ({ t: new Date(e.d).getTime(), y: e.pbf, d: e.d }))
 
   // today's session shown right under the week strip
   const onToday = () => { if (S.active) nav('/workout'); else if (routine) startFlow(routine.id); else dayOverrideSheet(todayISO()) }
@@ -114,6 +122,47 @@ export default function Home() {
         )}
         <div className="chart" style={{ marginTop: 8 }}><LineChart points={bwPoints} h={130} unit={S.unit} goal={S.targetW} /></div>
       </> : <div className="muted small">{t("No entries yet — log your weight to start the curve. It's also asked before every workout.")}</div>}
+    </div>
+
+    <div className="card">
+      <div className="row between" style={{ marginBottom: 6 }}>
+        <h2 style={{ margin: 0 }}>{t('Body composition')}</h2>
+        <div className="row" style={{ gap: 8 }}>
+          <Button size="sm" icon="target" style={S.targetPbf || S.targetSmm ? { color: 'var(--yellow)' } : undefined} onClick={bodycompGoalSheet}>{S.targetPbf ? fmtNum(S.targetPbf) + ' %' : t('Goal')}</Button>
+          <Button size="sm" icon="plus" onClick={bodycompSheet}>{t('Log')}</Button>
+        </div>
+      </div>
+      {comp ? <>
+        <div className="row" style={{ gap: 8, alignItems: 'baseline' }}>
+          {comp.pbf != null && <div className="big">{fmtNum(comp.pbf)} <span className="muted" style={{ fontSize: '1rem' }}>{t('% fat')}</span></div>}
+          {!!pbfDelta && (
+            <span className="small row" style={{ gap: 2, fontWeight: 500, color: compDeltaColor(pbfDelta, comp.pbf, S.targetPbf) }}>
+              <Icon name={pbfDelta > 0 ? 'arrowUp' : 'arrowDown'} style={{ fontSize: 12 }} />
+              {fmtNum(Math.abs(pbfDelta))}
+            </span>
+          )}
+          <span className="dim small" style={{ marginLeft: 'auto' }}>{fmtDate(comp.d, true)}</span>
+        </div>
+        {comp.smm != null && (
+          <div className="small row" style={{ marginTop: 4, gap: 5 }}>
+            <span className="muted">{t('Muscle')} <b style={{ color: 'var(--label)' }}>{fmtNum(comp.smm)} kg</b></span>
+            {!!smmDelta && (
+              <span className="row" style={{ gap: 2, fontWeight: 500, color: compDeltaColor(smmDelta, comp.smm, S.targetSmm) }}>
+                <Icon name={smmDelta > 0 ? 'arrowUp' : 'arrowDown'} style={{ fontSize: 12 }} />
+                {fmtNum(Math.abs(smmDelta))}
+              </span>
+            )}
+            {S.targetSmm && <span className="dim">· {t('Goal')} {fmtNum(S.targetSmm)} kg</span>}
+          </div>
+        )}
+        {S.targetPbf && comp.pbf != null && (
+          <div className="small row" style={{ color: 'var(--yellow)', marginTop: 4, gap: 5 }}>
+            <Icon name="target" style={{ fontSize: 13 }} />
+            <span>{t('Goal')} {fmtNum(S.targetPbf)} % · {Math.abs(S.targetPbf - comp.pbf) < 0.05 ? t('reached!') : t(S.targetPbf > comp.pbf ? '{0} to gain' : '{0} to lose', fmtNum(Math.abs(S.targetPbf - comp.pbf)) + ' %')}</span>
+          </div>
+        )}
+        {pbfPoints.length > 1 && <div className="chart" style={{ marginTop: 8 }}><LineChart points={pbfPoints} h={130} unit="%" color="var(--teal)" goal={S.targetPbf} /></div>}
+      </> : <div className="muted small">{t('No exams yet — log your first bioimpedance exam to start tracking body composition.')}</div>}
     </div>
 
     <div className="card tappable" style={{ cursor: 'pointer' }} onClick={() => calendarSheet()}>

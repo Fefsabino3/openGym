@@ -90,7 +90,9 @@ export default function LineChart({ points, h = 150, unit = '', color = 'var(--a
 
   const poly = pts.map(p => X(p.t).toFixed(1) + ',' + Y(p.y).toFixed(1)).join(' ')
   const last = pts[pts.length - 1]
-  const gid = 'g' + Math.round(t0 % 1e7) + '_' + H
+  // Color is part of the id: two same-height charts starting on the same date (weight and
+  // body composition on Home) would otherwise share a gradient and both fill in one color.
+  const gid = 'g' + Math.round(t0 % 1e7) + '_' + H + '_' + color.replace(/[^a-z0-9]/gi, '')
   const hoverPts = (single ? [points[0]] : points).map(p => ({ x: X(p.t), y: Y(p.y), iso: p.d || isoOf(new Date(p.t)), v: p.y, note: p.note }))
   const marked = points.some(p => p.m != null)
 
